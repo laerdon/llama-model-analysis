@@ -58,13 +58,24 @@ _CONFIG_FOR_DOC = "LlamaConfig"
 ## my functions and classes and other stuff i added
 
 def identify_outliers(tensor: torch.Tensor, threshold: int):
-    mean = torch.mean(tensor)
-    std = torch.std(tensor)
+    # shoot im stupid it's not torch.mean(tensor) it's tensor.mean. bro
+    mean = tensor.mean(dim=1, keepdim=True)
+    std = tensor.std(dim=1, keepdim=True)
 
     z_scores = tensor - mean / std
+    print(mean, std, z_scores)
+    sys.exit(0)
     return torch.abs(z_scores) > threshold
 
-def update_all_masks(model, threshold=2.0):
+    # ok it still not working i'm gonna do a simpler algo
+
+    # i think the issue might be that the outliers are already being found and zeroed out, that's why i'm not finding any
+
+def simple_identify_outliers(tensor: torch.Tensor, threshold: int):
+    bool_tensor = torch.zeros_like(tensor, dtype=torch.bool)
+    return torch.abs(tensor) > threshold
+
+def update_all_masks(model, threshold=8.0):
     for module in model.modules():
         if isinstance(module, MaskedLinear):
             module.update_mask(threshold)
@@ -72,16 +83,18 @@ def update_all_masks(model, threshold=2.0):
 class MaskedLinear(nn.Linear):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.weight_mask = None
+        self.activation_mask = None
 
-    def update_mask(self, threshold=2.0):
-        self.weight_mask = ~identify_outliers(self.weight, threshold)
+    def update_mask(self, output, threshold=2.0):
+        self.activation_mask = ~simple_identify_outliers(output, threshold)
+
+    # can't update mask based on activations, those do not have outliers. must use input, which are the activations.
+    # 128 x 4096 (activations) vs. 4096 x 4096
 
     def forward(self, input):
-        if self.weight_mask is None:
-            self.update_mask()
-        masked_weight = self.weight * self.weight_mask
-        return F.linear(input, masked_weight, self.bias)
+        output = F.linear(input, self.weight, self.bias)
+        self.update_mask(output)
+        return output * self.activation_mask
 
 ###################### ADD 1
 
